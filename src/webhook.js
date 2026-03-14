@@ -1,8 +1,6 @@
 const { generateSuggestion } = require('./suggestion');
 const { sendTelegramAlert } = require('./telegram');
 
-const VERIFY_TOKEN = process.env.WABA_VERIFY_TOKEN;
-
 const processedIds = new Set();
 const MAX_TRACKED = 2000;
 const trackedQueue = [];
@@ -16,58 +14,77 @@ function log(level, message, meta = {}) {
   }
 }
 
-function handleWebhookVerification({ 'hub.verify_token': token, 'hub.challenge': challenge }) {
-  if (VERIFY_TOKEN && token === VERIFY_TOKEN) {
-    log('info', 'webhook verification successful');
-    return challenge || 'OK';
+// -----------------------------------------------------------------------
+// WAHA webhook — payload format:
+// {
+//   event: "message",
+//   session: "default",
+//   payload: {
+//     id: "...",
+//     from: "5511999999999@c.us",
+//     body: "texto",
+//     hasMedia: false,
+//     timestamp: 1667561485,
+//     _data: { notifyName: "João" }
+//   }
+// }
+// -----------------------------------------------------------------------
+
+async function handleWahaWebhook(payload) {
+  if (!payload || typeof payload.event !== 'string') {
+    throw new Error('invalid waha payload');
   }
-  log('warn', 'webhook verification failed', { tokenProvided: !!token });
-  return null;
+
+  // Só processa eventos de mensagens recebidas (não as enviadas por nós)
+  const HANDLED_EVENTS = ['message', 'message.any'];
+  if (!HANDLED_EVENTS.includes(payload.event)) {
+    log('info', 'waha event ignored', { event: payload.event });
+    return;
+  }
+
+  const msgPayload = payload.payload;
+  if (!msgPayload || !msgPayload.id) {
+    log('warn', 'waha payload sem id, ignorado', { event: payload.event });
+    return;
+  }
+
+  // Ignora mensagens enviadas pelo próprio número
+  if (msgPayload.fromMe === true) {
+    log('info', 'mensagem própria ignorada', { id: msgPayload.id });
+    return;
+  }
+
+  const event = normalizeWahaMessage(payload);
+  if (!event) return;
+
+  await processEvent(event);
 }
 
-async function handleIncomingMessages(payload) {
-  if (!payload || !Array.isArray(payload.entry)) {
-    throw new Error('invalid webhook payload');
-  }
+function normalizeWahaMessage(wahaEvent) {
+  const p = wahaEvent.payload || {};
+  if (!p.id) return null;
 
-  const events = [];
-  payload.entry.forEach((entry) => {
-    (entry.changes || []).forEach((change) => {
-      const value = change.value || {};
-      const contacts = value.contacts || [];
-      const contact = contacts[0] || {};
-      const messages = value.messages || [];
-      messages.forEach((message) => {
-        const event = normalizeMessage(entry.id, contact, message);
-        if (event) {
-          events.push(event);
-        }
-      });
-    });
-  });
+  // Nome do remetente pode estar em _data.notifyName ou pushName
+  const senderName =
+    p._data?.notifyName ||
+    p._data?.pushName ||
+    wahaEvent.me?.pushName ||
+    (p.from ? p.from.replace('@c.us', '').replace('@s.whatsapp.net', '') : 'Desconhecido');
 
-  log('info', 'processing incoming webhook', { eventCount: events.length });
-  await Promise.all(events.map((event) => processEvent(event)));
-}
-
-function normalizeMessage(entryId, contact, message) {
-  if (!message || !message.id) {
-    return null;
-  }
-
-  const text = message.text?.body || '';
-  const name = contact.profile?.name || contact.wa_id || message.from;
-  const snippet = text || message.type || 'conteúdo multimídia';
+  const text = p.body || (p.hasMedia ? `[midia: ${p.type || 'arquivo'}]` : '');
+  const snippet = text || p.type || 'conteúdo multimídia';
 
   return {
-    id: message.id,
-    entryId,
-    from: message.from,
-    senderName: name,
+    id: p.id,
+    session: wahaEvent.session || 'default',
+    from: p.from || '',
+    senderName,
     text: snippet,
-    type: message.type,
-    timestamp: message.timestamp,
-    raw: message,
+    type: p.type || 'text',
+    hasMedia: p.hasMedia || false,
+    mediaUrl: p.media?.url || null,
+    timestamp: p.timestamp,
+    raw: p,
   };
 }
 
@@ -77,7 +94,7 @@ async function processEvent(event) {
     return;
   }
 
-  log('info', 'processing event', { messageId: event.id, from: event.from, type: event.type });
+  log('info', 'processing waha event', { messageId: event.id, from: event.from, type: event.type });
 
   try {
     const suggestion = await generateSuggestion(event);
@@ -90,26 +107,21 @@ async function processEvent(event) {
 }
 
 function shouldSkip(messageId) {
-  if (!messageId) {
-    return true;
-  }
-  if (processedIds.has(messageId)) {
-    return true;
-  }
+  if (!messageId) return true;
+  if (processedIds.has(messageId)) return true;
+
   processedIds.add(messageId);
   trackedQueue.push(messageId);
   if (trackedQueue.length > MAX_TRACKED) {
-    const stale = trackedQueue.shift();
-    processedIds.delete(stale);
+    processedIds.delete(trackedQueue.shift());
   }
   return false;
 }
 
 module.exports = {
-  handleWebhookVerification,
-  handleIncomingMessages,
+  handleWahaWebhook,
   __test: {
-    normalizeMessage,
+    normalizeWahaMessage,
     processedIds,
     shouldSkip,
   },

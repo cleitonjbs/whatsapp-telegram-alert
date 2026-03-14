@@ -1,10 +1,42 @@
 version: '3.9'
 
 services:
-  waba-telegram:
+  # ------------------------------------------------------------------
+  # WAHA — WhatsApp HTTP API (self-hosted)
+  # Acesse http://localhost:3001 para escanear o QR e configurar sessão
+  # ------------------------------------------------------------------
+  waha:
+    image: devlikeapro/waha:latest
+    container_name: waha
+    ports:
+      - '3001:3000'
+    environment:
+      # Chave de API para autenticar requests ao WAHA
+      WHATSAPP_API_KEY: ${WAHA_API_KEY:-changeme}
+      # Envia todos os eventos de mensagem para o nosso serviço bridge
+      WHATSAPP_HOOK_URL: http://bridge:3000/webhook
+      WHATSAPP_HOOK_EVENTS: message
+      # (Opcional) HMAC para autenticar os webhooks enviados ao bridge
+      # WHATSAPP_HOOK_HMAC_KEY: ${WAHA_HMAC_KEY:-}
+    volumes:
+      - waha-sessions:/app/.sessions
+      - waha-media:/app/media
+    restart: unless-stopped
+
+  # ------------------------------------------------------------------
+  # Bridge — este projeto Node.js que encaminha alertas ao Telegram
+  # ------------------------------------------------------------------
+  bridge:
     build: .
+    container_name: waha-telegram-bridge
     ports:
       - '3000:3000'
     env_file:
       - .env
+    depends_on:
+      - waha
     restart: unless-stopped
+
+volumes:
+  waha-sessions:
+  waha-media:

@@ -13,7 +13,7 @@ function log(level, message, meta = {}) {
 }
 
 // Validação antecipada das variáveis obrigatórias
-const REQUIRED_VARS = ['WABA_VERIFY_TOKEN', 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID'];
+const REQUIRED_VARS = ['TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID'];
 const missing = REQUIRED_VARS.filter((v) => !process.env[v]);
 if (missing.length > 0) {
   log('error', 'variáveis de ambiente obrigatórias ausentes', { missing });

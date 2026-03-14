@@ -1,7 +1,9 @@
 const express = require('express');
-const { handleWebhookVerification, handleIncomingMessages } = require('./webhook');
+const crypto = require('crypto');
+const { handleWahaWebhook } = require('./webhook');
 
 const START_TIME = Date.now();
+const WAHA_HMAC_KEY = process.env.WAHA_HMAC_KEY || '';
 
 function log(level, message, meta = {}) {
   const entry = { level, time: new Date().toISOString(), message, ...meta };
@@ -12,14 +14,39 @@ function log(level, message, meta = {}) {
   }
 }
 
+// Valida assinatura HMAC opcional do WAHA (X-Webhook-Hmac + sha512)
+function verifyHmac(req) {
+  if (!WAHA_HMAC_KEY) return true; // HMAC não configurado, aceita tudo
+
+  const signature = req.headers['x-webhook-hmac'];
+  if (!signature) {
+    log('warn', 'hmac header ausente');
+    return false;
+  }
+
+  const expected = crypto
+    .createHmac('sha512', WAHA_HMAC_KEY)
+    .update(req.rawBody || '')
+    .digest('hex');
+
+  return crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
+}
+
 function createApp() {
   const app = express();
 
-  // Limite de 1 MB para o body JSON (proteção básica contra payloads gigantes)
-  app.use(express.json({ limit: '1mb' }));
+  // Preserva o raw body para verificação HMAC
+  app.use(
+    express.json({
+      limit: '2mb',
+      verify: (req, _res, buf) => {
+        req.rawBody = buf.toString('utf8');
+      },
+    }),
+  );
 
   // ------------------------------------------------------------------
-  // Health check — usado pelo Docker/proxy para verificar se está de pé
+  // Health check
   // ------------------------------------------------------------------
   app.get('/health', (_req, res) => {
     res.json({
@@ -30,31 +57,24 @@ function createApp() {
   });
 
   // ------------------------------------------------------------------
-  // Verificação de webhook (GET) — desafio da Meta
-  // ------------------------------------------------------------------
-  app.get('/webhook', (req, res) => {
-    const challenge = handleWebhookVerification(req.query);
-    if (challenge) {
-      return res.send(challenge);
-    }
-    log('warn', 'webhook GET verification rejected', { ip: req.ip });
-    return res.status(403).json({ error: 'verification failed' });
-  });
-
-  // ------------------------------------------------------------------
-  // Recebimento de mensagens (POST)
+  // Webhook do WAHA (POST /webhook)
+  // Configure no WAHA: url = http://<seu-host>:3000/webhook
   // ------------------------------------------------------------------
   app.post('/webhook', async (req, res) => {
+    if (!verifyHmac(req)) {
+      log('warn', 'waha hmac inválido, requisição rejeitada');
+      return res.status(401).json({ error: 'unauthorized' });
+    }
+
     try {
-      await handleIncomingMessages(req.body);
+      await handleWahaWebhook(req.body);
       return res.sendStatus(200);
     } catch (error) {
-      log('error', 'webhook POST processing failed', { reason: error.message });
-      // A Meta espera 200 mesmo em falhas de processamento interno para não
-      // reenviar infinitamente. Erros de payload inválido retornam 400.
-      if (error.message === 'invalid webhook payload') {
+      log('error', 'waha webhook processing failed', { reason: error.message });
+      if (error.message === 'invalid waha payload') {
         return res.status(400).json({ error: error.message });
       }
+      // Retorna 200 mesmo em erros internos para evitar reenvios infinitos
       return res.sendStatus(200);
     }
   });
@@ -63,7 +83,7 @@ function createApp() {
   // Rota raiz
   // ------------------------------------------------------------------
   app.get('/', (_req, res) => {
-    res.json({ service: 'WhatsApp → Telegram alert bridge', status: 'running' });
+    res.json({ service: 'WAHA → Telegram alert bridge', status: 'running' });
   });
 
   // ------------------------------------------------------------------
