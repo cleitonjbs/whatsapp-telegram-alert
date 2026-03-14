@@ -7,10 +7,21 @@ const processedIds = new Set();
 const MAX_TRACKED = 2000;
 const trackedQueue = [];
 
+function log(level, message, meta = {}) {
+  const entry = { level, time: new Date().toISOString(), message, ...meta };
+  if (level === 'error') {
+    console.error(JSON.stringify(entry));
+  } else {
+    console.log(JSON.stringify(entry));
+  }
+}
+
 function handleWebhookVerification({ 'hub.verify_token': token, 'hub.challenge': challenge }) {
   if (VERIFY_TOKEN && token === VERIFY_TOKEN) {
+    log('info', 'webhook verification successful');
     return challenge || 'OK';
   }
+  log('warn', 'webhook verification failed', { tokenProvided: !!token });
   return null;
 }
 
@@ -35,6 +46,7 @@ async function handleIncomingMessages(payload) {
     });
   });
 
+  log('info', 'processing incoming webhook', { eventCount: events.length });
   await Promise.all(events.map((event) => processEvent(event)));
 }
 
@@ -61,11 +73,20 @@ function normalizeMessage(entryId, contact, message) {
 
 async function processEvent(event) {
   if (shouldSkip(event.id)) {
+    log('info', 'duplicate message skipped', { messageId: event.id });
     return;
   }
 
-  const suggestion = await generateSuggestion(event);
-  await sendTelegramAlert(event, suggestion);
+  log('info', 'processing event', { messageId: event.id, from: event.from, type: event.type });
+
+  try {
+    const suggestion = await generateSuggestion(event);
+    await sendTelegramAlert(event, suggestion);
+    log('info', 'alert dispatched', { messageId: event.id });
+  } catch (err) {
+    log('error', 'failed to process event', { messageId: event.id, error: err.message });
+    throw err;
+  }
 }
 
 function shouldSkip(messageId) {

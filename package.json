@@ -4,7 +4,10 @@
   "main": "index.js",
   "scripts": {
     "start": "node src/index.js",
-    "test": "jest"
+    "dev": "node --watch src/index.js",
+    "test": "jest",
+    "test:coverage": "jest --coverage",
+    "test:watch": "jest --watch"
   },
   "keywords": [],
   "author": "",

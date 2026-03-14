@@ -1,11 +1,33 @@
 const axios = require('axios');
 
 const TELEGRAM_BASE = 'https://api.telegram.org';
-const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-const CHAT_ID = process.env.TELEGRAM_CHAT_ID;
+const MAX_ATTEMPTS = 3;
+const BASE_DELAY_MS = 1000;
+const REQUEST_TIMEOUT_MS = 8000;
+
+function getBotToken() {
+  return process.env.TELEGRAM_BOT_TOKEN;
+}
+
+function getChatId() {
+  return process.env.TELEGRAM_CHAT_ID;
+}
+
+function log(level, message, meta = {}) {
+  const entry = { level, time: new Date().toISOString(), message, ...meta };
+  if (level === 'error') {
+    console.error(JSON.stringify(entry));
+  } else {
+    console.log(JSON.stringify(entry));
+  }
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 function createKeyboard(messageId) {
-  const safeId = messageId ? messageId.replace(/:/g, '_') : 'unknown';
+  const safeId = messageId ? messageId.replace(/[^a-zA-Z0-9_-]/g, '_') : 'unknown';
   return {
     inline_keyboard: [
       [
@@ -18,35 +40,57 @@ function createKeyboard(messageId) {
 }
 
 async function sendTelegramAlert(event, suggestion) {
-  if (!BOT_TOKEN || !CHAT_ID) {
-    throw new Error('Telegram bot ou chat não configurado');
+  const botToken = getBotToken();
+  const chatId = getChatId();
+
+  if (!botToken || !chatId) {
+    throw new Error('Telegram bot ou chat não configurado (TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID)');
   }
 
-  const url = `${TELEGRAM_BASE}/bot${BOT_TOKEN}/sendMessage`;
+  const url = `${TELEGRAM_BASE}/bot${botToken}/sendMessage`;
   const payload = {
-    chat_id: CHAT_ID,
+    chat_id: chatId,
     text: suggestion.telegramText,
     parse_mode: 'HTML',
     reply_markup: createKeyboard(event.id),
   };
 
-  const maxAttempts = 3;
-  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+  let lastError;
+
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
     try {
-      return await axios.post(url, payload);
+      const response = await axios.post(url, payload, { timeout: REQUEST_TIMEOUT_MS });
+      log('info', 'telegram message sent', { messageId: event.id, attempt });
+      return response;
     } catch (error) {
-      if (attempt === maxAttempts) {
-        console.error('Falha ao enviar alerta ao Telegram', error.message);
-        throw error;
+      lastError = error;
+      const status = error.response?.status;
+      log('warn', 'telegram send attempt failed', {
+        messageId: event.id,
+        attempt,
+        status,
+        reason: error.message,
+      });
+
+      // Não faz retry em erros de autenticação ou chat inválido (4xx exceto 429)
+      if (status && status >= 400 && status !== 429 && status < 500) {
+        break;
       }
-      await new Promise((resolve) => setTimeout(resolve, attempt * 1000));
+
+      if (attempt < MAX_ATTEMPTS) {
+        await sleep(attempt * BASE_DELAY_MS);
+      }
     }
   }
+
+  log('error', 'all telegram attempts exhausted', { messageId: event.id, reason: lastError.message });
+  throw lastError;
 }
 
 module.exports = {
   sendTelegramAlert,
   __test: {
     createKeyboard,
+    sleep,
   },
 };
