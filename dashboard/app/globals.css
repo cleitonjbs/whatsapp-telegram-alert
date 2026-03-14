@@ -1,0 +1,45 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Dark theme — inspirado no Vercel dashboard */
+    --background: 0 0% 7%;          /* #111111 */
+    --foreground: 0 0% 95%;         /* #f2f2f2 */
+    --surface: 0 0% 11%;            /* #1c1c1c */
+    --border: 0 0% 18%;             /* #2e2e2e */
+    --muted: 0 0% 14%;              /* #242424 */
+    --muted-foreground: 0 0% 55%;   /* #8c8c8c */
+    --accent: 217 100% 60%;         /* #3b82f6 azul */
+    --accent-foreground: 0 0% 100%;
+    --success: 142 71% 45%;         /* #22c55e verde */
+    --warning: 38 92% 50%;          /* #f59e0b amarelo */
+    --danger: 0 72% 51%;            /* #ef4444 vermelho */
+    --radius: 0.5rem;
+  }
+
+  * {
+    border-color: hsl(var(--border));
+    box-sizing: border-box;
+  }
+
+  body {
+    background-color: hsl(var(--background));
+    color: hsl(var(--foreground));
+    font-family: var(--font-geist-sans), system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: hsl(var(--background));
+  }
+  ::-webkit-scrollbar-thumb {
+    background: hsl(var(--border));
+    border-radius: 3px;
+  }
+}

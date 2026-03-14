@@ -37,6 +37,27 @@ services:
       - waha
     restart: unless-stopped
 
+  # ------------------------------------------------------------------
+  # Dashboard — Next.js para monitorar mensagens e sessoes
+  # Acesse http://localhost:3002
+  # ------------------------------------------------------------------
+  dashboard:
+    build:
+      context: ./dashboard
+      dockerfile: Dockerfile
+    container_name: waha-telegram-dashboard
+    ports:
+      - '3002:3002'
+    environment:
+      PORT: 3002
+      BRIDGE_URL: http://bridge:3000
+      WAHA_URL: http://waha:3000
+      WAHA_API_KEY: ${WAHA_API_KEY:-changeme}
+    depends_on:
+      - bridge
+      - waha
+    restart: unless-stopped
+
 volumes:
   waha-sessions:
   waha-media:
